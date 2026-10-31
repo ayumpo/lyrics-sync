@@ -92,6 +92,10 @@ class MockAPI:
         if ep == "api/search" and t == "Graves Into Gardens":
             return h.send(200, [{"trackName": "Graves Into Gardens", "artistName": "Elevation Worship",
                                  "duration": 30, "plainLyrics": "p", "syncedLyrics": lrc(6)}])
+        if t == "No Hay Rewind":  # lrcmux flags this vocal song "instrumental" with no lyrics (real behaviour)
+            item = {"trackName": t, "artistName": "Manny Montes", "duration": 15, "instrumental": True,
+                    "plainLyrics": None, "syncedLyrics": None}
+            return h.send(200, item if ep == "api/get" else [item])
         if ep == "api/search" and t == "Cancion Sin Tags":
             return h.send(200, [{"trackName": "Cancion Sin Tags", "artistName": "Untagged Artist",
                                  "duration": 10, "plainLyrics": "solo texto", "syncedLyrics": None}])

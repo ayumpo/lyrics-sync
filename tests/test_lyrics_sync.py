@@ -135,3 +135,52 @@ def test_path_and_limit_flags(library, mock_api, run):
     stats, _ = run(mock_api("normal"), "--path", "Funky")
     assert stats == {"from_embedded": 1}
     assert not f["gig"].with_suffix(".lrc").exists()
+
+
+def test_lrcmux_instrumental_flag_is_treated_as_a_miss(library, mock_api, run, tmp_path):
+    """lrcmux marks some vocal songs instrumental; only LRCLIB's (human-set) flag is trusted."""
+    import shutil
+    import sqlite3
+
+    from mutagen.flac import FLAC
+
+    music, f = library
+    track = music / "Manny Montes/El Escenario (2010)/11 - No Hay Rewind.flac"
+    track.parent.mkdir(parents=True)
+    shutil.copy(f["interludio"], track)
+    tags = FLAC(track)
+    tags["artist"], tags["title"], tags["album"] = "Manny Montes", "No Hay Rewind", "El Escenario"
+    tags.save()
+
+    stats, _ = run(mock_api("normal"), "--path", "Manny Montes")
+    assert stats == {"not_found": 1}
+    row = sqlite3.connect(tmp_path / "config/lyrics-sync.db").execute(
+        "SELECT status, source FROM tracks WHERE path LIKE 'Manny Montes/%'").fetchone()
+    assert row == ("none", "")
+
+
+def test_state_upgrade_requeues_lrcmux_instrumentals(tmp_path):
+    import sqlite3
+
+    db = tmp_path / "lyrics-sync.db"
+    old = sqlite3.connect(db)  # state as written by <=1.1.0 (no meta table)
+    old.execute("""CREATE TABLE tracks(path TEXT PRIMARY KEY, mtime REAL, status TEXT, source TEXT,
+                   artist TEXT, title TEXT, checked REAL, attempts INTEGER DEFAULT 0)""")
+    old.executemany("INSERT INTO tracks VALUES(?,?,?,?,?,?,?,?)", [
+        ("a.mp3", 1, "instrumental", "lrcmux", "A", "Vocal Song", 1e9, 1),
+        ("b.mp3", 1, "instrumental", "lrclib", "B", "Real Instrumental", 1e9, 1),
+        ("c.mp3", 1, "synced", "lrcmux", "C", "Synced", 1e9, 0),
+    ])
+    old.commit()
+    old.close()
+
+    state = ls.State(db)
+    state.migrate()
+    rows = dict((p, (s, c)) for p, s, c in state.db.execute("SELECT path, status, checked FROM tracks"))
+    assert rows["a.mp3"] == ("none", 0)                    # re-checked on the next pass
+    assert rows["b.mp3"] == ("instrumental", 1e9)          # LRCLIB's flag is kept
+    assert rows["c.mp3"] == ("synced", 1e9)
+    # idempotent: a second run changes nothing
+    state.db.execute("UPDATE tracks SET status='instrumental', source='lrcmux' WHERE path='c.mp3'")
+    state.migrate()
+    assert state.db.execute("SELECT status FROM tracks WHERE path='c.mp3'").fetchone()[0] == "instrumental"

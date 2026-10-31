@@ -53,7 +53,7 @@ try:
 except ImportError:  # pragma: no cover
     sys.exit("mutagen is required:  pip install mutagen")
 
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 PROJECT_URL = "https://github.com/ayumpo/lyrics-sync"
 USER_AGENT = f"lyrics-sync/{VERSION} (+{PROJECT_URL})"
 LRCLIB_MIN_INTERVAL = 1.0    # seconds between requests (be polite to the free LRCLIB service)
@@ -233,9 +233,13 @@ class Found:
 class LrclibLikeProvider:
     """Client for LRCLIB and LRCLIB-compatible APIs (lrcmux /compat/lrclib)."""
 
-    def __init__(self, name: str, base: str, min_interval: float, timeout: float = 30):
+    def __init__(self, name: str, base: str, min_interval: float, timeout: float = 30,
+                 trust_instrumental: bool = True):
         self.name, self.base = name, base.rstrip("/")
         self.min_interval, self.timeout = min_interval, timeout
+        # LRCLIB's instrumental flag is set by people; lrcmux also sets it for vocal songs whose
+        # source simply had no lyrics, so for lrcmux an "instrumental" answer is treated as a miss.
+        self.trust_instrumental = trust_instrumental
         self._last = 0.0
         self.fail_streak = 0
         self.paused_until = 0.0
@@ -302,10 +306,9 @@ class LrclibLikeProvider:
             self.fail_streak = 0
         return -1, None
 
-    @staticmethod
-    def _to_found(item: dict, source: str) -> Found:
+    def _to_found(self, item: dict) -> Found:
         return Found(item.get("syncedLyrics") or None, item.get("plainLyrics") or None,
-                     bool(item.get("instrumental")), source)
+                     bool(item.get("instrumental")) and self.trust_instrumental, self.name)
 
     def lookup(self, t: TrackInfo) -> Found | None:
         """Return the best hit (synced preferred). None on miss; raises ConnectionError on outage."""
@@ -318,7 +321,7 @@ class LrclibLikeProvider:
             if code == -1:
                 raise ConnectionError(f"{self.name} unavailable")
             if code == 200 and isinstance(data, dict):
-                f = self._to_found(data, self.name)
+                f = self._to_found(data)
                 rdur = float(data.get("duration") or 0)
                 if rdur and t.duration and abs(rdur - t.duration) > 4:
                     f = None  # matched a different version (remix/live/edit) — don't trust it
@@ -335,7 +338,8 @@ class LrclibLikeProvider:
                 hit = self._pick(data, t, title)
                 if hit and (hit.instrumental or is_synced(hit.synced, t.duration)):
                     return hit
-                best_plain = best_plain or hit
+                if hit and hit.plain:
+                    best_plain = best_plain or hit
                 if hit:
                     break  # track is known here, just not synced — don't burn more calls
         return best_plain
@@ -358,7 +362,7 @@ class LrclibLikeProvider:
         if not scored:
             return None
         scored.sort(key=lambda x: x[:3])
-        return self._to_found(scored[0][3], self.name)
+        return self._to_found(scored[0][3])
 
 
 # ----------------------------------------------------------------------------- state
@@ -369,7 +373,25 @@ class State:
         self.db.execute("""CREATE TABLE IF NOT EXISTS tracks(
             path TEXT PRIMARY KEY, mtime REAL, status TEXT, source TEXT,
             artist TEXT, title TEXT, checked REAL, attempts INTEGER DEFAULT 0)""")
+        self.db.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
         self.db.commit()
+
+    SCHEMA_VERSION = 2
+
+    def migrate(self):
+        """Bring state written by older versions up to date (never called in dry-run)."""
+        row = self.db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
+        version = int(row[0]) if row else 1
+        if version < 2:
+            # <=1.1.0 trusted lrcmux's instrumental flag, which is also set for vocal songs with no
+            # lyrics at the source; those tracks were parked for months. Re-check them next pass.
+            n = self.db.execute("UPDATE tracks SET status='none', checked=0 "
+                                "WHERE status='instrumental' AND source='lrcmux'").rowcount
+            if n:
+                LOG.info("state upgrade: %d tracks marked instrumental by lrcmux will be re-checked", n)
+        if version < self.SCHEMA_VERSION:
+            self.db.execute("INSERT OR REPLACE INTO meta VALUES('schema_version', ?)", (str(self.SCHEMA_VERSION),))
+            self.db.commit()
 
     def get(self, rel: str):
         return self.db.execute("SELECT mtime,status,checked,attempts FROM tracks WHERE path=?", (rel,)).fetchone()
@@ -402,12 +424,15 @@ class Syncer:
         self.state_dir = Path(args.state_dir)
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.state = State(self.state_dir / "lyrics-sync.db")
+        if not args.dry_run:
+            self.state.migrate()
         self.providers: list[LrclibLikeProvider] = []
         for p in [x.strip().lower() for x in args.providers.split(",") if x.strip()]:
             if p == "lrclib":
                 self.providers.append(LrclibLikeProvider("lrclib", args.lrclib_url, LRCLIB_MIN_INTERVAL))
             elif p == "lrcmux":
-                self.providers.append(LrclibLikeProvider("lrcmux", args.lrcmux_url, LRCMUX_MIN_INTERVAL))
+                self.providers.append(LrclibLikeProvider("lrcmux", args.lrcmux_url, LRCMUX_MIN_INTERVAL,
+                                                         trust_instrumental=False))
         self.use_embedded = "embedded" in args.providers.lower()
         self.excludes = {x.strip() for x in args.exclude.split(",") if x.strip()}
         self.uid = int(os.environ["PUID"]) if os.environ.get("PUID") else None
