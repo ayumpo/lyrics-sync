@@ -1,0 +1,17 @@
+# Native (no Docker) install — e.g. a Proxmox LXC or any Linux box.
+# See README → "Proxmox / Linux without Docker". Copy to /etc/systemd/system/
+[Unit]
+Description=lyrics-sync: fetch synced .lrc lyrics for the music library
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=lyrics-sync
+Environment=MUSIC_DIR=/mnt/music
+Environment=STATE_DIR=/var/lib/lyrics-sync
+ExecStart=/opt/lyrics-sync/venv/bin/python /opt/lyrics-sync/lyrics_sync.py
+StateDirectory=lyrics-sync
+Nice=10
+IOSchedulingClass=idle
+TimeoutStopSec=3min

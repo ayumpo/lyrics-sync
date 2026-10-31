@@ -1,0 +1,10 @@
+[Unit]
+Description=Run lyrics-sync nightly
+
+[Timer]
+OnCalendar=*-*-* 02:30
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

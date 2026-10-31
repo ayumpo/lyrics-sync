@@ -1,0 +1,28 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install ffmpeg (used to generate test audio)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest pyflakes
+      - name: Lint
+        run: pyflakes lyrics_sync.py tests
+      - name: Test
+        run: pytest -v
+      - name: Check shell scripts
+        run: bash -n docker/entrypoint.sh

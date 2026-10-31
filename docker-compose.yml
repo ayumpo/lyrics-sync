@@ -1,0 +1,19 @@
+# lyrics-sync — copy .env.example to .env, set MUSIC_PATH / PUID / PGID, then:  docker compose up -d
+services:
+  lyrics-sync:
+    image: ghcr.io/ayumpo/lyrics-sync:latest
+    container_name: lyrics-sync
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-UTC}
+      PUID: ${PUID:-1000}            # owner for new .lrc files (match your media server / music folder)
+      PGID: ${PGID:-1000}
+      INTERVAL_HOURS: ${INTERVAL_HOURS:-24}   # hours between passes; 0 = run once and exit
+      PROVIDERS: ${PROVIDERS:-embedded,lrclib,lrcmux}
+      RETRY_DAYS: ${RETRY_DAYS:-14}
+      UPGRADE_PLAIN: ${UPGRADE_PLAIN:-true}
+      WRITE_PLAIN_TXT: ${WRITE_PLAIN_TXT:-false}
+    volumes:
+      - ${MUSIC_PATH:?set MUSIC_PATH in .env}:/music
+      - ${CONFIG_PATH:-./config}:/config
+    stop_grace_period: 3m             # lets the current track finish and the state DB save on stop
