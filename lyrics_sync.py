@@ -16,7 +16,7 @@ under STATE_DIR/backup). Misses are remembered in SQLite and retried after RETRY
 (backing off further on repeated misses), so nightly runs only hit the network for
 new or due tracks.
 
-Only dependency: mutagen.   Python 3.9+.
+Only dependency: mutagen.   Python 3.10+.
 
 Config (env vars, CLI flags override — see README for the full list):
   MUSIC_DIR=/music  STATE_DIR=/config  PROVIDERS=embedded,lrclib,lrcmux

@@ -125,7 +125,7 @@ Add a container from the **Docker** tab:
 | Path `/config` | `/mnt/user/appdata/lyrics-sync` |
 | Variable `PUID` / `PGID` | `99` / `100` |
 
-## Without Docker (any OS with Python 3.9+)
+## Without Docker (any OS with Python 3.10+)
 
 ```bash
 pip install mutagen
